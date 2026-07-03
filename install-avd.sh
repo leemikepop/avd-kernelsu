@@ -108,45 +108,32 @@ elif ls "$ARTIFACT_DIR"/*.ko >/dev/null 2>&1; then
 fi
 
 if [ -n "$MODULES_SRC" ]; then
-  echo "Creating modules overlay with correct directory structure..."
+  echo "Creating modules overlay with flattened critical modules..."
+  mkdir -p overlay/lib/modules
   
-  if [ -f "$MODULES_SRC/modules.load" ]; then
-    # Recreate the directory structure based on modules.load paths
-    while read -r MOD_PATH; do
-      # Ignore empty lines or comments
-      [ -z "$MOD_PATH" ] && continue
-      [[ "$MOD_PATH" == \#* ]] && continue
-      
-      BASENAME=$(basename "$MOD_PATH")
-      
-      # Check if we have this module in our flattened directory
-      if [ -f "$MODULES_SRC/$BASENAME" ]; then
-        mkdir -p "overlay/lib/modules/$(dirname "$MOD_PATH")"
-        cp "$MODULES_SRC/$BASENAME" "overlay/lib/modules/$MOD_PATH"
-        echo "  Injected: $MOD_PATH"
-      fi
-    done < "$MODULES_SRC/modules.load"
-    
-    # Also overwrite the stock modules.load with ours just in case
-    cp "$MODULES_SRC/modules.load" "overlay/lib/modules/modules.load"
-    
-    # Generate a synthetic modules.dep to map module names to paths
-    echo "  Generating modules.dep..."
-    while read -r MOD_PATH; do
-      [ -z "$MOD_PATH" ] && continue
-      [[ "$MOD_PATH" == \#* ]] && continue
-      echo "$MOD_PATH:" >> overlay/lib/modules/modules.dep
-    done < "$MODULES_SRC/modules.load"
-  else
-    # Fallback to flattened if no modules.load exists (unlikely for GKI)
-    mkdir -p overlay/lib/modules
-    for ko in "$MODULES_SRC"/*.ko; do
-      BASENAME=$(basename "$ko")
-      cp "$ko" "overlay/lib/modules/$BASENAME"
-      echo "  Injected (flattened): $BASENAME"
-    done
-    ls overlay/lib/modules/*.ko 2>/dev/null | xargs -n1 basename > overlay/lib/modules/modules.load 2>/dev/null || true
-  fi
+  # The critical modules required for FirstStageMount (from the blog post)
+  CRITICAL_MODULES=(
+    "virtio-rng.ko"
+    "virtio_blk.ko"
+    "virtio_console.ko"
+    "virtio_dma_buf.ko"
+    "virtio_pci.ko"
+    "virtio_pci_legacy_dev.ko"
+    "virtio_pci_modern_dev.ko"
+    "vmw_vsock_virtio_transport.ko"
+  )
+  
+  for mod in "${CRITICAL_MODULES[@]}"; do
+    if [ -f "$MODULES_SRC/$mod" ]; then
+      cp "$MODULES_SRC/$mod" "overlay/lib/modules/$mod"
+      echo "  Injected (flattened): $mod"
+    else
+      echo "  WARNING: Critical module $mod not found!"
+    fi
+  done
+  
+  # DO NOT overwrite modules.load or modules.dep!
+  # The stock vendor_boot ramdisk already has them configured for flattened paths.
   
   echo "Packing modules into overlay CPIO..."
   cd overlay
