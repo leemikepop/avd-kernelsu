@@ -129,6 +129,14 @@ if [ -n "$MODULES_SRC" ]; then
     
     # Also overwrite the stock modules.load with ours just in case
     cp "$MODULES_SRC/modules.load" "overlay/lib/modules/modules.load"
+    
+    # Generate a synthetic modules.dep to map module names to paths
+    echo "  Generating modules.dep..."
+    while read -r MOD_PATH; do
+      [ -z "$MOD_PATH" ] && continue
+      [[ "$MOD_PATH" == \#* ]] && continue
+      echo "$MOD_PATH:" >> overlay/lib/modules/modules.dep
+    done < "$MODULES_SRC/modules.load"
   else
     # Fallback to flattened if no modules.load exists (unlikely for GKI)
     mkdir -p overlay/lib/modules
