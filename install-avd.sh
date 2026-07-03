@@ -8,6 +8,14 @@ set -e
 ARTIFACT_DIR="${1:-.}"
 AVD_NAME="${2:-ksu_test}"
 
+# Convert ARTIFACT_DIR to absolute path so it survives 'cd'
+if command -v realpath >/dev/null 2>&1; then
+  ARTIFACT_DIR=$(realpath "$ARTIFACT_DIR")
+else
+  # fallback for Mac/old environments
+  ARTIFACT_DIR="$(cd "$ARTIFACT_DIR" && pwd)"
+fi
+
 # Check dependencies
 for cmd in cpio gzip file lz4; do
   if ! command -v $cmd >/dev/null 2>&1; then
