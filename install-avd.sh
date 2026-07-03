@@ -107,9 +107,19 @@ elif ls "$ARTIFACT_DIR"/*.ko >/dev/null 2>&1; then
   MODULES_SRC="$ARTIFACT_DIR"
 fi
 
+# Download magiskboot if missing
+if [ ! -f "magiskboot" ]; then
+  echo "Downloading magiskboot (required for AVD ramdisk repack)..."
+  wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk -O Magisk.zip
+  unzip -q -j Magisk.zip lib/x86_64/libmagiskboot.so -d .
+  mv libmagiskboot.so magiskboot
+  chmod +x magiskboot
+  rm Magisk.zip
+fi
+
 if [ -n "$MODULES_SRC" ]; then
-  echo "Creating modules overlay with flattened critical modules..."
-  mkdir -p overlay/lib/modules
+  echo "Decompressing original ramdisk with magiskboot..."
+  ./magiskboot decompress "$RAMDISK" overlay/ramdisk.cpio
   
   # The critical modules required for FirstStageMount (from the blog post)
   CRITICAL_MODULES=(
@@ -123,25 +133,18 @@ if [ -n "$MODULES_SRC" ]; then
     "vmw_vsock_virtio_transport.ko"
   )
   
+  echo "Injecting critical modules into ramdisk..."
   for mod in "${CRITICAL_MODULES[@]}"; do
     if [ -f "$MODULES_SRC/$mod" ]; then
-      cp "$MODULES_SRC/$mod" "overlay/lib/modules/$mod"
-      echo "  Injected (flattened): $mod"
+      ./magiskboot cpio overlay/ramdisk.cpio "add 0644 lib/modules/$mod $MODULES_SRC/$mod"
+      echo "  Injected: $mod"
     else
       echo "  WARNING: Critical module $mod not found!"
     fi
   done
   
-  # DO NOT overwrite modules.load or modules.dep!
-  # The stock vendor_boot ramdisk already has them configured for flattened paths.
-  
-  echo "Packing modules into overlay CPIO..."
-  cd overlay
-  find . | cpio -o -H newc 2>/dev/null | gzip > ../modules.cpio.gz
-  cd ..
-  
-  echo "Appending modules overlay to ramdisk..."
-  cat "$RAMDISK" modules.cpio.gz > "$AVD_DIR/ramdisk-ksu.img"
+  echo "Re-compressing ramdisk (gzip format)..."
+  ./magiskboot compress=gzip overlay/ramdisk.cpio "$AVD_DIR/ramdisk-ksu.img"
 else
   echo "WARNING: No kernel modules (*.ko) found in $ARTIFACT_DIR or $ARTIFACT_DIR/modules"
   cp "$RAMDISK" "$AVD_DIR/ramdisk-ksu.img"
