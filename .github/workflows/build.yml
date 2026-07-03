@@ -142,6 +142,15 @@ jobs:
       - name: Clean Kernel Flags
         uses: ./.github/actions/clean-flags
 
+      - name: Bypass KernelSU x86_64 Check
+        working-directory: ${{ github.workspace }}/kernel/common
+        run: |
+          if [ -f "drivers/kernelsu/core/init.c" ]; then
+            echo "Patching KernelSU x86_64 syscall check..."
+            sed -i '/FATAL: Your kernel is missing the indirect syscall bypass/d' drivers/kernelsu/core/init.c
+            sed -i '/if (!boot_cpu_has(X86_FEATURE_INDIRECT_SAFE)) {/,/}/d' drivers/kernelsu/core/init.c
+          fi
+
       - name: Build Kernel
         working-directory: ${{ github.workspace }}/kernel
         run: |
