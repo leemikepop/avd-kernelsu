@@ -98,44 +98,6 @@ echo "Repacking ramdisk with matching modules..."
 TMPDIR=$(mktemp -d)
 cd "$TMPDIR"
 
-# Detect format and decompress
-if command -v xxd >/dev/null; then
-  MAGIC=$(xxd -l4 -p "$RAMDISK")
-else
-  # fallback to python to read magic
-  MAGIC=$(python3 -c "import sys; f=open(sys.argv[1],'rb'); print(f.read(4).hex())" "$RAMDISK" 2>/dev/null || echo "")
-fi
-
-case "$MAGIC" in
-  02214c18) # LZ4 legacy
-    # Use -dc to stdout to prevent lz4 from deleting the output file if it hits trailing garbage/padding
-    lz4 -dc "$RAMDISK" > ramdisk.cpio || true
-    ;;
-  1f8b*) # gzip
-    gzip -dc "$RAMDISK" > ramdisk.cpio
-    ;;
-  *) # try as raw cpio or standard lz4
-    if file "$RAMDISK" | grep -qi "LZ4"; then
-      lz4 -dc "$RAMDISK" > ramdisk.cpio || true
-    else
-      cp "$RAMDISK" ramdisk.cpio
-    fi
-    ;;
-esac
-
-if [ ! -f ramdisk.cpio ] || [ ! -s ramdisk.cpio ]; then
-  echo "ERROR: Failed to decompress ramdisk (Format not supported, corrupted, or lz4 failed)"
-  exit 1
-fi
-
-# Ignore mknod permission errors (when running without sudo)
-cpio -idm < ramdisk.cpio 2>/dev/null || true
-
-# Verify that extraction actually succeeded by checking for standard ramdisk files
-if [ ! -f "init" ] && [ ! -d "lib/modules" ]; then
-  echo "ERROR: Failed to extract CPIO (no 'init' or 'lib/modules' found in extracted ramdisk)"
-  exit 1
-fi
 
 # Replace modules with our matching ones
 MODULES_SRC=""
@@ -146,31 +108,35 @@ elif ls "$ARTIFACT_DIR"/*.ko >/dev/null 2>&1; then
 fi
 
 if [ -n "$MODULES_SRC" ]; then
-  echo "Injecting kernel modules from $MODULES_SRC..."
-  mkdir -p lib/modules
+  echo "Creating modules overlay..."
+  mkdir -p overlay/lib/modules
   
   for ko in "$MODULES_SRC"/*.ko; do
     BASENAME=$(basename "$ko")
-    # Force copy into lib/modules/
-    cp "$ko" "lib/modules/$BASENAME"
+    cp "$ko" "overlay/lib/modules/$BASENAME"
     echo "  Injected: $BASENAME"
   done
 
   # Also copy or generate modules.load
   if [ -f "$MODULES_SRC/modules.load" ]; then
-    cp "$MODULES_SRC/modules.load" "lib/modules/modules.load"
+    cp "$MODULES_SRC/modules.load" "overlay/lib/modules/modules.load"
   else
-    ls lib/modules/*.ko 2>/dev/null | xargs -n1 basename > lib/modules/modules.load 2>/dev/null || true
+    ls overlay/lib/modules/*.ko 2>/dev/null | xargs -n1 basename > overlay/lib/modules/modules.load 2>/dev/null || true
   fi
+  
+  echo "Packing modules into overlay CPIO..."
+  cd overlay
+  find . | cpio -o -H newc 2>/dev/null | gzip > ../modules.cpio.gz
+  cd ..
+  
+  echo "Appending modules overlay to ramdisk..."
+  cat "$RAMDISK" modules.cpio.gz > "$AVD_DIR/ramdisk-ksu.img"
 else
   echo "WARNING: No kernel modules (*.ko) found in $ARTIFACT_DIR or $ARTIFACT_DIR/modules"
+  cp "$RAMDISK" "$AVD_DIR/ramdisk-ksu.img"
 fi
 
-# Repack ramdisk
-echo "Creating new ramdisk..."
-find . | cpio -o -H newc 2>/dev/null | gzip > "$AVD_DIR/ramdisk-ksu.img"
-
-cd -
+cd "$WORKSPACE_DIR"
 rm -rf "$TMPDIR"
 
 # Copy kernel
