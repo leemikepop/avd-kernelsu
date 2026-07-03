@@ -90,14 +90,43 @@ echo "Repacking ramdisk with matching modules..."
 TMPDIR=$(mktemp -d)
 cd "$TMPDIR"
 
-# Extract original ramdisk (it's gzip + cpio)
-if file "$RAMDISK" | grep -q "gzip"; then
-  gzip -dc "$RAMDISK" | cpio -idm 2>/dev/null
-elif file "$RAMDISK" | grep -q "LZ4"; then
-  lz4 -dc "$RAMDISK" | cpio -idm 2>/dev/null
+# Detect format and decompress
+if command -v xxd >/dev/null; then
+  MAGIC=$(xxd -l4 -p "$RAMDISK")
 else
-  # Try as raw cpio
-  cpio -idm < "$RAMDISK" 2>/dev/null
+  # fallback to python to read magic
+  MAGIC=$(python3 -c "import sys; f=open(sys.argv[1],'rb'); print(f.read(4).hex())" "$RAMDISK" 2>/dev/null || echo "")
+fi
+
+case "$MAGIC" in
+  02214c18) # LZ4 legacy
+    # Use -dc to stdout to prevent lz4 from deleting the output file if it hits trailing garbage/padding
+    lz4 -dc "$RAMDISK" > ramdisk.cpio || true
+    ;;
+  1f8b*) # gzip
+    gzip -dc "$RAMDISK" > ramdisk.cpio
+    ;;
+  *) # try as raw cpio or standard lz4
+    if file "$RAMDISK" | grep -qi "LZ4"; then
+      lz4 -dc "$RAMDISK" > ramdisk.cpio || true
+    else
+      cp "$RAMDISK" ramdisk.cpio
+    fi
+    ;;
+esac
+
+if [ ! -f ramdisk.cpio ] || [ ! -s ramdisk.cpio ]; then
+  echo "ERROR: Failed to decompress ramdisk (Format not supported, corrupted, or lz4 failed)"
+  exit 1
+fi
+
+# Ignore mknod permission errors (when running without sudo)
+cpio -idm < ramdisk.cpio 2>/dev/null || true
+
+# Verify that extraction actually succeeded by checking for standard ramdisk files
+if [ ! -f "init" ] && [ ! -d "lib/modules" ]; then
+  echo "ERROR: Failed to extract CPIO (no 'init' or 'lib/modules' found in extracted ramdisk)"
+  exit 1
 fi
 
 # Replace modules with our matching ones
