@@ -11,6 +11,9 @@
 
 set -e
 
+# Prevent Git Bash (MSYS2) from automatically converting POSIX paths (like /data/local/tmp) to Windows paths
+export MSYS_NO_PATHCONV=1
+
 ARTIFACT_DIR="${1:-.}"
 ADB="${ADB:-adb}"
 
