@@ -119,6 +119,7 @@ fi
 
 if [ -n "$MODULES_SRC" ]; then
   echo "Decompressing original ramdisk with magiskboot..."
+  mkdir -p overlay
   ./magiskboot decompress "$RAMDISK" overlay/ramdisk.cpio
   
   # The critical modules required for FirstStageMount (from the blog post)
