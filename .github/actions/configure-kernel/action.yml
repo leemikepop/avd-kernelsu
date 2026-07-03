@@ -45,8 +45,10 @@ runs:
           # Strip CONFIG_ prefix to get Kconfig symbol name
           SYM="${cfg#CONFIG_}"
           if grep -rq "^config $SYM$" "$KERNEL_SRC" 2>/dev/null; then
-            echo "${cfg}=y" >> "$FRAG"
-            echo "  Added: ${cfg}=y"
+            # DISABLED: Forcing to =y breaks Bazel strict module_outs checks.
+            # Since we now use repack-ramdisk to inject modules, we don't need this hack anymore.
+            # echo "${cfg}=y" >> "$FRAG"
+            echo "  Skipped (disabled to prevent Bazel module_outs failure): ${cfg}"
           else
             echo "  Skipped (not in Kconfig): ${cfg}"
           fi

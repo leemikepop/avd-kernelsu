@@ -8,31 +8,53 @@ set -e
 ARTIFACT_DIR="${1:-.}"
 AVD_NAME="${2:-ksu_test}"
 
-# Find AVD path
-if [ -n "$ANDROID_AVD_HOME" ]; then
-  AVD_HOME="$ANDROID_AVD_HOME"
-elif [ -d "$HOME/.android/avd" ]; then
-  AVD_HOME="$HOME/.android/avd"
-elif [ -d "$LOCALAPPDATA/Android/Sdk" ]; then
-  AVD_HOME="$USERPROFILE/.android/avd"
+# Check dependencies
+for cmd in cpio gzip file lz4; do
+  if ! command -v $cmd >/dev/null 2>&1; then
+    echo "ERROR: Required command '$cmd' is not installed."
+    echo "Please install it first (e.g., 'sudo apt-get install $cmd' on Ubuntu/WSL)."
+    exit 1
+  fi
+done
+
+# Detect WSL and user profiles
+WIN_USER=""
+WSL_USER=""
+WIN_LOCALAPPDATA=""
+WSL_LOCALAPPDATA=""
+if command -v wslpath >/dev/null 2>&1; then
+  WIN_USER=$(cmd.exe /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r\n')
+  [ -n "$WIN_USER" ] && WSL_USER=$(wslpath "$WIN_USER" 2>/dev/null)
+  WIN_LOCALAPPDATA=$(cmd.exe /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r\n')
+  [ -n "$WIN_LOCALAPPDATA" ] && WSL_LOCALAPPDATA=$(wslpath "$WIN_LOCALAPPDATA" 2>/dev/null)
 fi
 
-AVD_DIR="$AVD_HOME/${AVD_NAME}.avd"
+# Find AVD path
+AVD_DIR=""
+for p in "$ANDROID_AVD_HOME/${AVD_NAME}.avd" "$HOME/.android/avd/${AVD_NAME}.avd" "$USERPROFILE/.android/avd/${AVD_NAME}.avd" "$WSL_USER/.android/avd/${AVD_NAME}.avd"; do
+  [ -d "$p" ] && AVD_DIR="$p" && break
+done
 
-if [ ! -d "$AVD_DIR" ]; then
-  echo "ERROR: AVD directory not found: $AVD_DIR"
+if [ -z "$AVD_DIR" ]; then
+  echo "ERROR: AVD directory not found for $AVD_NAME"
   exit 1
 fi
 
 # Find system image path from config.ini
-SYSDIR=$(grep "image.sysdir.1" "$AVD_DIR/config.ini" | cut -d= -f2 | tr -d '[:space:]')
-if [ -n "$ANDROID_SDK_ROOT" ]; then
-  SYSIMG="$ANDROID_SDK_ROOT/$SYSDIR"
-elif [ -n "$ANDROID_HOME" ]; then
-  SYSIMG="$ANDROID_HOME/$SYSDIR"
-else
-  SYSIMG="$HOME/Android/Sdk/$SYSDIR"
+SYSDIR=$(grep "image.sysdir.1" "$AVD_DIR/config.ini" | cut -d= -f2 | tr -d '[:space:]' | tr '\\' '/')
+SDK_ROOT=""
+for p in "$ANDROID_SDK_ROOT" "$ANDROID_HOME" "$LOCALAPPDATA/Android/Sdk" "$HOME/Android/Sdk" "$USERPROFILE/AppData/Local/Android/Sdk" "$WSL_LOCALAPPDATA/Android/Sdk" "$WSL_USER/AppData/Local/Android/Sdk"; do
+  if [ -d "$p" ] && [ -f "$p/$SYSDIR/ramdisk.img" ]; then
+    SDK_ROOT="$p"
+    break
+  fi
+done
+
+if [ -z "$SDK_ROOT" ]; then
+  echo "ERROR: Android SDK containing $SYSDIR/ramdisk.img not found"
+  exit 1
 fi
+SYSIMG="$SDK_ROOT/$SYSDIR"
 
 echo "=== AVD KernelSU Installer ==="
 echo "Artifact: $ARTIFACT_DIR"
@@ -79,9 +101,16 @@ else
 fi
 
 # Replace modules with our matching ones
-if [ -d "$ARTIFACT_DIR/modules" ] && [ -d "lib/modules" ]; then
-  echo "Replacing kernel modules..."
-  for ko in "$ARTIFACT_DIR/modules"/*.ko; do
+MODULES_SRC=""
+if [ -d "$ARTIFACT_DIR/modules" ] && ls "$ARTIFACT_DIR/modules"/*.ko >/dev/null 2>&1; then
+  MODULES_SRC="$ARTIFACT_DIR/modules"
+elif ls "$ARTIFACT_DIR"/*.ko >/dev/null 2>&1; then
+  MODULES_SRC="$ARTIFACT_DIR"
+fi
+
+if [ -n "$MODULES_SRC" ] && [ -d "lib/modules" ]; then
+  echo "Replacing kernel modules from $MODULES_SRC..."
+  for ko in "$MODULES_SRC"/*.ko; do
     BASENAME=$(basename "$ko")
     # Find and replace in ramdisk
     find lib/modules -name "$BASENAME" -exec cp "$ko" {} \;
@@ -89,9 +118,11 @@ if [ -d "$ARTIFACT_DIR/modules" ] && [ -d "lib/modules" ]; then
   done
 
   # Also copy modules.load if present
-  if [ -f "$ARTIFACT_DIR/modules/modules.load" ]; then
-    find lib/modules -name "modules.load" -exec cp "$ARTIFACT_DIR/modules/modules.load" {} \;
+  if [ -f "$MODULES_SRC/modules.load" ]; then
+    find lib/modules -name "modules.load" -exec cp "$MODULES_SRC/modules.load" {} \;
   fi
+else
+  echo "WARNING: No kernel modules (*.ko) found in $ARTIFACT_DIR or $ARTIFACT_DIR/modules"
 fi
 
 # Repack ramdisk

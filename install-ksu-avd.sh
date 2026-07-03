@@ -19,11 +19,17 @@ KERNEL=""
 [ -f "$ARTIFACT_DIR/bzImage" ] && KERNEL="$ARTIFACT_DIR/bzImage"
 [ -f "$ARTIFACT_DIR/Image" ] && KERNEL="$ARTIFACT_DIR/Image"
 [ -z "$KERNEL" ] && { echo "ERROR: No kernel in $ARTIFACT_DIR"; exit 1; }
-[ -d "$ARTIFACT_DIR/modules" ] || { echo "ERROR: No modules/ in $ARTIFACT_DIR"; exit 1; }
+MODULES_SRC=""
+if [ -d "$ARTIFACT_DIR/modules" ] && ls "$ARTIFACT_DIR/modules"/*.ko >/dev/null 2>&1; then
+  MODULES_SRC="$ARTIFACT_DIR/modules"
+elif ls "$ARTIFACT_DIR"/*.ko >/dev/null 2>&1; then
+  MODULES_SRC="$ARTIFACT_DIR"
+fi
+[ -z "$MODULES_SRC" ] && { echo "ERROR: No kernel modules (*.ko) found in $ARTIFACT_DIR or $ARTIFACT_DIR/modules"; exit 1; }
 
 echo "=== AVD KernelSU Installer ==="
 echo "Kernel: $KERNEL ($(wc -c < "$KERNEL") bytes)"
-echo "Modules: $(ls "$ARTIFACT_DIR/modules/"*.ko 2>/dev/null | wc -l) .ko files"
+echo "Modules: $(ls "$MODULES_SRC/"*.ko 2>/dev/null | wc -l) .ko files"
 echo ""
 
 # Check ADB
@@ -35,10 +41,13 @@ echo "  Connected as root"
 # Push modules to AVD
 echo "[2/6] Pushing modules to AVD..."
 $ADB shell "rm -rf /data/local/tmp/ksu && mkdir -p /data/local/tmp/ksu/modules"
-for f in "$ARTIFACT_DIR/modules"/*; do
+for f in "$MODULES_SRC"/*.ko; do
   $ADB push "$f" "/data/local/tmp/ksu/modules/$(basename "$f")" >/dev/null 2>&1
 done
-echo "  Pushed $(ls "$ARTIFACT_DIR/modules/"*.ko | wc -l) modules"
+if [ -f "$MODULES_SRC/modules.load" ]; then
+  $ADB push "$MODULES_SRC/modules.load" "/data/local/tmp/ksu/modules/modules.load" >/dev/null 2>&1
+fi
+echo "  Pushed $(ls "$MODULES_SRC/"*.ko | wc -l) modules"
 
 # Push the stock ramdisk to AVD for repacking
 echo "[3/6] Pushing ramdisk to AVD for repacking..."
@@ -47,21 +56,30 @@ echo "[3/6] Pushing ramdisk to AVD for repacking..."
 AVD_NAME=$($ADB shell getprop ro.boot.qemu.avd_name 2>/dev/null | tr -d '\r\n')
 echo "  AVD name: $AVD_NAME"
 
-# Find SDK path
-SDK=""
-for p in "$ANDROID_SDK_ROOT" "$ANDROID_HOME" "$LOCALAPPDATA/Android/Sdk" "$HOME/Android/Sdk"; do
-  [ -d "$p" ] && SDK="$p" && break
-done
-[ -z "$SDK" ] && { echo "ERROR: Android SDK not found"; exit 1; }
-
+# Detect WSL and user profiles
+WIN_USER=""
+WSL_USER=""
+if command -v wslpath >/dev/null 2>&1; then
+  WIN_USER=$(cmd.exe /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r\n')
+  [ -n "$WIN_USER" ] && WSL_USER=$(wslpath "$WIN_USER" 2>/dev/null)
 # Find system image from AVD config
 AVD_DIR=""
-for p in "$HOME/.android/avd/${AVD_NAME}.avd" "$USERPROFILE/.android/avd/${AVD_NAME}.avd"; do
+for p in "$ANDROID_AVD_HOME/${AVD_NAME}.avd" "$HOME/.android/avd/${AVD_NAME}.avd" "$USERPROFILE/.android/avd/${AVD_NAME}.avd" "$WSL_USER/.android/avd/${AVD_NAME}.avd"; do
   [ -d "$p" ] && AVD_DIR="$p" && break
 done
 [ -z "$AVD_DIR" ] && { echo "ERROR: AVD dir not found for $AVD_NAME"; exit 1; }
 
-SYSDIR=$(grep "image.sysdir.1" "$AVD_DIR/config.ini" | cut -d= -f2 | tr -d '[:space:]')
+# Find SDK path & System image
+SDK=""
+SYSDIR=$(grep "image.sysdir.1" "$AVD_DIR/config.ini" | cut -d= -f2 | tr -d '[:space:]' | tr '\\' '/')
+for p in "$ANDROID_SDK_ROOT" "$ANDROID_HOME" "$LOCALAPPDATA/Android/Sdk" "$HOME/Android/Sdk" "$USERPROFILE/AppData/Local/Android/Sdk" "$WSL_USER/AppData/Local/Android/Sdk"; do
+  if [ -d "$p" ] && [ -f "$p/$SYSDIR/ramdisk.img" ]; then
+    SDK="$p"
+    break
+  fi
+done
+[ -z "$SDK" ] && { echo "ERROR: Android SDK containing $SYSDIR/ramdisk.img not found"; exit 1; }
+
 SYSIMG="$SDK/$SYSDIR"
 RAMDISK="$SYSIMG/ramdisk.img"
 echo "  System image: $SYSIMG"
