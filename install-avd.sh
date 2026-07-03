@@ -108,19 +108,35 @@ elif ls "$ARTIFACT_DIR"/*.ko >/dev/null 2>&1; then
 fi
 
 if [ -n "$MODULES_SRC" ]; then
-  echo "Creating modules overlay..."
-  mkdir -p overlay/lib/modules
+  echo "Creating modules overlay with correct directory structure..."
   
-  for ko in "$MODULES_SRC"/*.ko; do
-    BASENAME=$(basename "$ko")
-    cp "$ko" "overlay/lib/modules/$BASENAME"
-    echo "  Injected: $BASENAME"
-  done
-
-  # Also copy or generate modules.load
   if [ -f "$MODULES_SRC/modules.load" ]; then
+    # Recreate the directory structure based on modules.load paths
+    while read -r MOD_PATH; do
+      # Ignore empty lines or comments
+      [ -z "$MOD_PATH" ] && continue
+      [[ "$MOD_PATH" == \#* ]] && continue
+      
+      BASENAME=$(basename "$MOD_PATH")
+      
+      # Check if we have this module in our flattened directory
+      if [ -f "$MODULES_SRC/$BASENAME" ]; then
+        mkdir -p "overlay/lib/modules/$(dirname "$MOD_PATH")"
+        cp "$MODULES_SRC/$BASENAME" "overlay/lib/modules/$MOD_PATH"
+        echo "  Injected: $MOD_PATH"
+      fi
+    done < "$MODULES_SRC/modules.load"
+    
+    # Also overwrite the stock modules.load with ours just in case
     cp "$MODULES_SRC/modules.load" "overlay/lib/modules/modules.load"
   else
+    # Fallback to flattened if no modules.load exists (unlikely for GKI)
+    mkdir -p overlay/lib/modules
+    for ko in "$MODULES_SRC"/*.ko; do
+      BASENAME=$(basename "$ko")
+      cp "$ko" "overlay/lib/modules/$BASENAME"
+      echo "  Injected (flattened): $BASENAME"
+    done
     ls overlay/lib/modules/*.ko 2>/dev/null | xargs -n1 basename > overlay/lib/modules/modules.load 2>/dev/null || true
   fi
   
