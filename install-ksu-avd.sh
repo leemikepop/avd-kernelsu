@@ -108,27 +108,8 @@ echo "  Decompressing ramdisk..."
 MAGIC=$(xxd -l4 -p ramdisk.img)
 case "$MAGIC" in
   02214c18) # LZ4 legacy
-    lz4 -d ramdisk.img ramdisk.cpio 2>/dev/null || {
-      # Try manual legacy decompression
-      dd if=ramdisk.img bs=1 skip=8 2>/dev/null | lz4 -d - ramdisk.cpio 2>/dev/null || {
-        echo "  Trying alternative lz4..."
-        # Skip 4-byte magic + 4-byte block size
-        python3 -c "
-import sys
-data = open('ramdisk.img','rb').read()
-# LZ4 legacy: magic(4) + blocks of [size(4) + compressed_data]
-pos = 4
-out = b''
-while pos < len(data):
-    bsz = int.from_bytes(data[pos:pos+4], 'little')
-    pos += 4
-    if bsz == 0 or bsz > len(data): break
-    out += data[pos:pos+bsz]  # these are lz4 blocks
-    pos += bsz
-open('ramdisk.raw','wb').write(out)
-" 2>/dev/null && lz4 -d ramdisk.raw ramdisk.cpio 2>/dev/null
-      }
-    }
+    # Use -dc to stdout to prevent lz4 from deleting the output file if it hits trailing garbage/padding
+    lz4 -dc ramdisk.img > ramdisk.cpio 2>/dev/null || true
     ;;
   1f8b*) # gzip
     gzip -dc ramdisk.img > ramdisk.cpio

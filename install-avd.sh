@@ -146,23 +146,21 @@ elif ls "$ARTIFACT_DIR"/*.ko >/dev/null 2>&1; then
 fi
 
 if [ -n "$MODULES_SRC" ]; then
-  if [ -d "lib/modules" ]; then
-    echo "Replacing kernel modules from $MODULES_SRC..."
-    for ko in "$MODULES_SRC"/*.ko; do
-      BASENAME=$(basename "$ko")
-      # Find and replace in ramdisk
-      find lib/modules -name "$BASENAME" -exec cp "$ko" {} \;
-      echo "  Replaced: $BASENAME"
-    done
+  echo "Injecting kernel modules from $MODULES_SRC..."
+  mkdir -p lib/modules
+  
+  for ko in "$MODULES_SRC"/*.ko; do
+    BASENAME=$(basename "$ko")
+    # Force copy into lib/modules/
+    cp "$ko" "lib/modules/$BASENAME"
+    echo "  Injected: $BASENAME"
+  done
 
-    # Also copy modules.load if present
-    if [ -f "$MODULES_SRC/modules.load" ]; then
-      find lib/modules -name "modules.load" -exec cp "$MODULES_SRC/modules.load" {} \;
-    fi
+  # Also copy or generate modules.load
+  if [ -f "$MODULES_SRC/modules.load" ]; then
+    cp "$MODULES_SRC/modules.load" "lib/modules/modules.load"
   else
-    echo "WARNING: Kernel modules provided, but 'lib/modules' was NOT found in the AVD's ramdisk.img!"
-    echo "         (For Android 14/API 34+, modules are usually located in vendor.img instead)."
-    echo "         You must use install-ksu-avd.sh (ADB method) to replace modules on this API level."
+    ls lib/modules/*.ko 2>/dev/null | xargs -n1 basename > lib/modules/modules.load 2>/dev/null || true
   fi
 else
   echo "WARNING: No kernel modules (*.ko) found in $ARTIFACT_DIR or $ARTIFACT_DIR/modules"
