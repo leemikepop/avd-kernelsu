@@ -145,18 +145,24 @@ elif ls "$ARTIFACT_DIR"/*.ko >/dev/null 2>&1; then
   MODULES_SRC="$ARTIFACT_DIR"
 fi
 
-if [ -n "$MODULES_SRC" ] && [ -d "lib/modules" ]; then
-  echo "Replacing kernel modules from $MODULES_SRC..."
-  for ko in "$MODULES_SRC"/*.ko; do
-    BASENAME=$(basename "$ko")
-    # Find and replace in ramdisk
-    find lib/modules -name "$BASENAME" -exec cp "$ko" {} \;
-    echo "  Replaced: $BASENAME"
-  done
+if [ -n "$MODULES_SRC" ]; then
+  if [ -d "lib/modules" ]; then
+    echo "Replacing kernel modules from $MODULES_SRC..."
+    for ko in "$MODULES_SRC"/*.ko; do
+      BASENAME=$(basename "$ko")
+      # Find and replace in ramdisk
+      find lib/modules -name "$BASENAME" -exec cp "$ko" {} \;
+      echo "  Replaced: $BASENAME"
+    done
 
-  # Also copy modules.load if present
-  if [ -f "$MODULES_SRC/modules.load" ]; then
-    find lib/modules -name "modules.load" -exec cp "$MODULES_SRC/modules.load" {} \;
+    # Also copy modules.load if present
+    if [ -f "$MODULES_SRC/modules.load" ]; then
+      find lib/modules -name "modules.load" -exec cp "$MODULES_SRC/modules.load" {} \;
+    fi
+  else
+    echo "WARNING: Kernel modules provided, but 'lib/modules' was NOT found in the AVD's ramdisk.img!"
+    echo "         (For Android 14/API 34+, modules are usually located in vendor.img instead)."
+    echo "         You must use install-ksu-avd.sh (ADB method) to replace modules on this API level."
   fi
 else
   echo "WARNING: No kernel modules (*.ko) found in $ARTIFACT_DIR or $ARTIFACT_DIR/modules"
