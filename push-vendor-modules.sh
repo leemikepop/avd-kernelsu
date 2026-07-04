@@ -23,6 +23,9 @@ else
 fi
 
 echo "=== Pushing vendor modules ==="
+echo "Waiting for device to become available (it may be bootlooping or showing a black screen)..."
+adb wait-for-device
+
 echo "Restarting adbd as root..."
 adb root || true
 sleep 2

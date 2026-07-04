@@ -37,7 +37,11 @@
 * **`clean-flags`**:
   * **功能**：在修改核心後，官方腳本常會自動給核心版本加上 `-dirty` 後綴，這會導致核心無法通過 Android 的 KMI（Kernel Module Interface）符號嚴格檢查。這個腳本會透過正則表達式移除 `-dirty` 標記，並關閉 Bazel 的嚴格檢查。
 * **`download-kernel`**:
-  * **功能**：利用 `repo` 工具從 `android.googlesource.com` 同步龐大的 Android GKI 源碼，並優化了同步速度（`--depth=1` 與 `nproc` 併發）。
+  * **運作機制**：利用 `repo` 工具同步 Android GKI 核心源碼。它使用 `repo init -b common-${inputs.android_version}-${inputs.kernel_version}-${inputs.os_patch_level} --depth=1` 的方式。這代表它抓取的是該 GKI 分支的 **最新提交 (Branch HEAD)**，而非某個特定 AVD 版本的歷史 Build ID。
+  * **與 AVD 實際運行的差異與痛點**：
+    * **核心版本不一致 (Vermagic Mismatch)**：原廠 AVD 映像檔的核心通常鎖定在某個特定的歷史編譯點（例如 Android 14 6.1 核心原廠為 `6.1.23`）。但 GitHub CI 同步的是分支 HEAD，會編譯出更新的核心版本（例如 `6.1.162`）。這導致我們必須手動將編譯產出的所有 `.ko` 模組打包置換進 AVD 的 ramdisk 中，否則核心會因為 Vermagic 不匹配拒絕載入驅動。
+    * **安全性硬化核心 (Syscall Hardening)**：因為 CI 抓的是最新的分支 HEAD，這些最新的分支已經被 Google 移植了 upstream 的安全性修正（如 `sys_call_table` 改為 inlined `switch-case` 分支）。這會強行觸發 KernelSU 的 `X86_FEATURE_INDIRECT_SAFE` 安全機制。若像 `build.yml` 中那樣使用 `sed -i` 強行跳過檢查，KernelSU 會在 runtime 發生攔截失效，導致 `stat` 系統呼叫回傳 `-ENOSYS`，讓 AVD 在掛載階段陷入 Signal 6 無限重啟。
+    * **為什麼手動編譯更易成功**：手動編譯（如 `installation_guide.md` 所示）是透過 `curl` 下載 Android CI 對應原廠 AVD Build ID 的 `manifest_9964412.xml` 來精確還原 2023 年的舊版源碼。該舊版源碼中**沒有**併入 syscall table 硬化，因此可以使用舊版或傳統 KernelSU (如 `v0.9.5` 或 `v0.7.x`) 的 syscall table hook 機制，無痛開機成功。
 
 ---
 

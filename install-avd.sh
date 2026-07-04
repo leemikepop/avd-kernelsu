@@ -16,6 +16,9 @@ else
   ARTIFACT_DIR="$(cd "$ARTIFACT_DIR" && pwd)"
 fi
 
+WORKSPACE_DIR="$(pwd)"
+
+
 # Check dependencies
 for cmd in cpio gzip file lz4; do
   if ! command -v $cmd >/dev/null 2>&1; then
@@ -135,6 +138,10 @@ if [ -n "$MODULES_SRC" ]; then
   )
   
   echo "Injecting critical modules into ramdisk..."
+  if [ -f "$WORKSPACE_DIR/my_modules.dep" ]; then
+    ./magiskboot cpio overlay/ramdisk.cpio "add 0644 lib/modules/modules.dep $WORKSPACE_DIR/my_modules.dep" > /dev/null
+    echo "  Injected: my_modules.dep"
+  fi
   for mod in "${CRITICAL_MODULES[@]}"; do
     if [ -f "$MODULES_SRC/$mod" ]; then
       ./magiskboot cpio overlay/ramdisk.cpio "add 0644 lib/modules/$mod $MODULES_SRC/$mod"
@@ -143,6 +150,10 @@ if [ -n "$MODULES_SRC" ]; then
       echo "  WARNING: Critical module $mod not found!"
     fi
   done
+  
+  echo "Injecting fstab.default fallback..."
+  ./magiskboot cpio overlay/ramdisk.cpio "extract first_stage_ramdisk/fstab.ranchu fstab.default" || true
+  ./magiskboot cpio overlay/ramdisk.cpio "add 0644 first_stage_ramdisk/fstab.default fstab.default" || true
   
   echo "Re-compressing ramdisk (gzip format)..."
   ./magiskboot compress=gzip overlay/ramdisk.cpio "$AVD_DIR/ramdisk-ksu.img"
